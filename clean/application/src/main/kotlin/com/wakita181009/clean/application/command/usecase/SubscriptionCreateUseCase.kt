@@ -12,6 +12,7 @@ import com.wakita181009.clean.application.command.port.SubscriptionCommandQueryP
 import com.wakita181009.clean.application.port.ClockPort
 import com.wakita181009.clean.application.port.TransactionPort
 import com.wakita181009.clean.domain.model.CustomerId
+import com.wakita181009.clean.domain.model.Money
 import com.wakita181009.clean.domain.model.PaymentMethod
 import com.wakita181009.clean.domain.model.PlanId
 import com.wakita181009.clean.domain.model.Subscription
@@ -58,6 +59,24 @@ class SubscriptionCreateUseCaseImpl(
 
         ensure(existingSubscription == null) { SubscriptionCreateError.AlreadySubscribed }
 
+        // Handle seat count for per-seat plans
+        val seatCount = if (plan.perSeatPricing) {
+            val sc = ensureNotNull(command.seatCount) {
+                SubscriptionCreateError.InvalidInput("seatCount", "Seat count is required for per-seat plans")
+            }
+            ensure(sc >= plan.minSeats) {
+                SubscriptionCreateError.InvalidInput("seatCount", "Seat count must be >= ${plan.minSeats}")
+            }
+            if (plan.maxSeats != null) {
+                ensure(sc <= plan.maxSeats!!) {
+                    SubscriptionCreateError.InvalidInput("seatCount", "Seat count must be <= ${plan.maxSeats}")
+                }
+            }
+            sc
+        } else {
+            null // Ignore seat count for non-per-seat plans
+        }
+
         val now = clockPort.now()
         val trialEnd = now.plus(Duration.ofDays(14))
 
@@ -78,6 +97,8 @@ class SubscriptionCreateUseCaseImpl(
             paymentMethod = paymentMethod,
             createdAt = now,
             updatedAt = now,
+            seatCount = seatCount,
+            accountCreditBalance = Money.zero(plan.basePrice.currency),
         )
 
         val savedSubscription = transactionPort.run {

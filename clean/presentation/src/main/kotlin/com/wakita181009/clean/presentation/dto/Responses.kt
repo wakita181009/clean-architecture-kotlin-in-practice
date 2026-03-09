@@ -1,9 +1,13 @@
 package com.wakita181009.clean.presentation.dto
 
+import com.wakita181009.clean.application.query.dto.CreditNoteDto
 import com.wakita181009.clean.application.query.dto.InvoiceDto
 import com.wakita181009.clean.application.query.dto.InvoiceLineItemDto
+import com.wakita181009.clean.application.query.dto.SubscriptionAddOnDto
 import com.wakita181009.clean.application.query.dto.SubscriptionDto
+import com.wakita181009.clean.domain.model.CreditNote
 import com.wakita181009.clean.domain.model.Subscription
+import com.wakita181009.clean.domain.model.SubscriptionAddOn
 import com.wakita181009.clean.domain.model.UsageRecord
 import java.time.Instant
 import java.time.LocalDate
@@ -22,6 +26,8 @@ data class SubscriptionResponse(
     val discount: DiscountResponse?,
     val createdAt: Instant,
     val updatedAt: Instant,
+    val seatCount: Int? = null,
+    val accountCreditBalance: MoneyResponse? = null,
 ) {
     companion object {
         fun from(subscription: Subscription): SubscriptionResponse = SubscriptionResponse(
@@ -47,6 +53,11 @@ data class SubscriptionResponse(
             discount = null,
             createdAt = subscription.createdAt,
             updatedAt = subscription.updatedAt,
+            seatCount = subscription.seatCount,
+            accountCreditBalance = MoneyResponse(
+                amount = subscription.accountCreditBalance.amount,
+                currency = subscription.accountCreditBalance.currency.name,
+            ),
         )
 
         fun from(dto: SubscriptionDto): SubscriptionResponse = SubscriptionResponse(
@@ -78,6 +89,11 @@ data class SubscriptionResponse(
             },
             createdAt = dto.createdAt,
             updatedAt = dto.updatedAt,
+            seatCount = dto.seatCount,
+            accountCreditBalance = MoneyResponse(
+                amount = java.math.BigDecimal(dto.accountCreditBalanceAmount),
+                currency = dto.accountCreditBalanceCurrency,
+            ),
         )
     }
 }
@@ -180,6 +196,103 @@ data class UsageRecordResponse(
             recordedAt = record.recordedAt,
             idempotencyKey = record.idempotencyKey.value,
         )
+    }
+}
+
+data class SubscriptionAddOnResponse(
+    val id: Long,
+    val subscriptionId: Long,
+    val addon: AddOnSummaryResponse,
+    val quantity: Int,
+    val status: String,
+    val attachedAt: Instant,
+    val detachedAt: Instant?,
+) {
+    companion object {
+        fun from(addOn: SubscriptionAddOn, addOnName: String, addOnPrice: MoneyResponse, addOnBillingType: String): SubscriptionAddOnResponse =
+            SubscriptionAddOnResponse(
+                id = addOn.id!!.value,
+                subscriptionId = addOn.subscriptionId.value,
+                addon = AddOnSummaryResponse(
+                    id = addOn.addOnId.value,
+                    name = addOnName,
+                    price = addOnPrice,
+                    billingType = addOnBillingType,
+                ),
+                quantity = addOn.quantity,
+                status = addOn.status.name,
+                attachedAt = addOn.attachedAt,
+                detachedAt = addOn.detachedAt,
+            )
+
+        fun from(dto: SubscriptionAddOnDto): SubscriptionAddOnResponse =
+            SubscriptionAddOnResponse(
+                id = dto.id,
+                subscriptionId = dto.subscriptionId,
+                addon = AddOnSummaryResponse(
+                    id = dto.addOnId,
+                    name = dto.addOnName,
+                    price = MoneyResponse(java.math.BigDecimal(dto.addOnPriceAmount), dto.addOnPriceCurrency),
+                    billingType = dto.addOnBillingType,
+                ),
+                quantity = dto.quantity,
+                status = dto.status,
+                attachedAt = dto.attachedAt,
+                detachedAt = dto.detachedAt,
+            )
+    }
+}
+
+data class AddOnSummaryResponse(
+    val id: Long,
+    val name: String,
+    val price: MoneyResponse,
+    val billingType: String,
+)
+
+data class CreditNoteResponse(
+    val id: Long,
+    val invoiceId: Long,
+    val subscriptionId: Long,
+    val amount: MoneyResponse,
+    val reason: String,
+    val type: String,
+    val application: String,
+    val status: String,
+    val refundTransactionId: String?,
+    val createdAt: Instant,
+    val updatedAt: Instant,
+) {
+    companion object {
+        fun from(creditNote: CreditNote): CreditNoteResponse =
+            CreditNoteResponse(
+                id = creditNote.id!!.value,
+                invoiceId = creditNote.invoiceId.value,
+                subscriptionId = creditNote.subscriptionId.value,
+                amount = MoneyResponse(creditNote.amount.amount, creditNote.amount.currency.name),
+                reason = creditNote.reason,
+                type = creditNote.type.name,
+                application = creditNote.application.name,
+                status = creditNote.status.name,
+                refundTransactionId = creditNote.refundTransactionId,
+                createdAt = creditNote.createdAt,
+                updatedAt = creditNote.updatedAt,
+            )
+
+        fun from(dto: CreditNoteDto): CreditNoteResponse =
+            CreditNoteResponse(
+                id = dto.id,
+                invoiceId = dto.invoiceId,
+                subscriptionId = dto.subscriptionId,
+                amount = MoneyResponse(java.math.BigDecimal(dto.amount), dto.currency),
+                reason = dto.reason,
+                type = dto.type,
+                application = dto.application,
+                status = dto.status,
+                refundTransactionId = dto.refundTransactionId,
+                createdAt = dto.createdAt,
+                updatedAt = dto.updatedAt,
+            )
     }
 }
 

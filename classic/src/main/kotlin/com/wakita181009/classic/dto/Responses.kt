@@ -1,11 +1,14 @@
 package com.wakita181009.classic.dto
 
+import com.wakita181009.classic.model.AddOn
+import com.wakita181009.classic.model.CreditNote
 import com.wakita181009.classic.model.Discount
 import com.wakita181009.classic.model.Invoice
 import com.wakita181009.classic.model.InvoiceLineItem
 import com.wakita181009.classic.model.Money
 import com.wakita181009.classic.model.Plan
 import com.wakita181009.classic.model.Subscription
+import com.wakita181009.classic.model.SubscriptionAddOn
 import com.wakita181009.classic.model.UsageRecord
 import java.math.BigDecimal
 import java.time.Instant
@@ -56,6 +59,46 @@ data class DiscountResponse(
     }
 }
 
+data class AddOnResponse(
+    val id: Long,
+    val name: String,
+    val price: MoneyResponse,
+    val billingType: String,
+) {
+    companion object {
+        fun from(addOn: AddOn) =
+            AddOnResponse(
+                id = addOn.id,
+                name = addOn.name,
+                price = MoneyResponse.from(addOn.price),
+                billingType = addOn.billingType.name,
+            )
+    }
+}
+
+data class SubscriptionAddOnResponse(
+    val id: Long,
+    val subscriptionId: Long,
+    val addon: AddOnResponse,
+    val quantity: Int,
+    val status: String,
+    val attachedAt: Instant,
+    val detachedAt: Instant?,
+) {
+    companion object {
+        fun from(sa: SubscriptionAddOn) =
+            SubscriptionAddOnResponse(
+                id = sa.id,
+                subscriptionId = sa.subscription.id,
+                addon = AddOnResponse.from(sa.addOn),
+                quantity = sa.quantity,
+                status = sa.status.name,
+                attachedAt = sa.attachedAt,
+                detachedAt = sa.detachedAt,
+            )
+    }
+}
+
 data class SubscriptionResponse(
     val id: Long,
     val customerId: Long,
@@ -68,6 +111,9 @@ data class SubscriptionResponse(
     val canceledAt: Instant?,
     val cancelAtPeriodEnd: Boolean,
     val discount: DiscountResponse?,
+    val seatCount: Int?,
+    val accountCreditBalance: MoneyResponse?,
+    val addons: List<SubscriptionAddOnResponse>,
     val createdAt: Instant,
     val updatedAt: Instant,
 ) {
@@ -75,6 +121,7 @@ data class SubscriptionResponse(
         fun from(
             subscription: Subscription,
             discount: Discount? = null,
+            addons: List<SubscriptionAddOn> = emptyList(),
         ) = SubscriptionResponse(
             id = subscription.id,
             customerId = subscription.customerId,
@@ -87,6 +134,9 @@ data class SubscriptionResponse(
             canceledAt = subscription.canceledAt,
             cancelAtPeriodEnd = subscription.cancelAtPeriodEnd,
             discount = DiscountResponse.from(discount),
+            seatCount = subscription.seatCount,
+            accountCreditBalance = MoneyResponse.from(subscription.accountCreditBalance),
+            addons = addons.map { SubscriptionAddOnResponse.from(it) },
             createdAt = subscription.createdAt,
             updatedAt = subscription.updatedAt,
         )
@@ -156,6 +206,37 @@ data class UsageRecordResponse(
                 quantity = record.quantity,
                 recordedAt = record.recordedAt,
                 idempotencyKey = record.idempotencyKey,
+            )
+    }
+}
+
+data class CreditNoteResponse(
+    val id: Long,
+    val invoiceId: Long,
+    val subscriptionId: Long,
+    val amount: MoneyResponse,
+    val reason: String,
+    val type: String,
+    val application: String,
+    val status: String,
+    val refundTransactionId: String?,
+    val createdAt: Instant,
+    val updatedAt: Instant,
+) {
+    companion object {
+        fun from(cn: CreditNote) =
+            CreditNoteResponse(
+                id = cn.id,
+                invoiceId = cn.invoice.id,
+                subscriptionId = cn.subscription.id,
+                amount = MoneyResponse.from(cn.amount),
+                reason = cn.reason,
+                type = cn.type.name,
+                application = cn.application.name,
+                status = cn.status.name,
+                refundTransactionId = cn.refundTransactionId,
+                createdAt = cn.createdAt,
+                updatedAt = cn.updatedAt,
             )
     }
 }

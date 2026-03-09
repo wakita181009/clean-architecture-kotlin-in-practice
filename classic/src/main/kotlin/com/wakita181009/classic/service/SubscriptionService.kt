@@ -6,7 +6,10 @@ import com.wakita181009.classic.exception.DuplicateSubscriptionException
 import com.wakita181009.classic.exception.InvalidStateTransitionException
 import com.wakita181009.classic.exception.PaymentFailedException
 import com.wakita181009.classic.exception.PlanNotFoundException
+import com.wakita181009.classic.exception.SeatCountOutOfRangeException
+import com.wakita181009.classic.exception.SeatCountRequiredException
 import com.wakita181009.classic.exception.SubscriptionNotFoundException
+import com.wakita181009.classic.model.BillingType
 import com.wakita181009.classic.model.Discount
 import com.wakita181009.classic.model.DiscountType
 import com.wakita181009.classic.model.Invoice
@@ -15,10 +18,12 @@ import com.wakita181009.classic.model.InvoiceStatus
 import com.wakita181009.classic.model.LineItemType
 import com.wakita181009.classic.model.Money
 import com.wakita181009.classic.model.Subscription
+import com.wakita181009.classic.model.SubscriptionAddOnStatus
 import com.wakita181009.classic.model.SubscriptionStatus
 import com.wakita181009.classic.repository.DiscountRepository
 import com.wakita181009.classic.repository.InvoiceRepository
 import com.wakita181009.classic.repository.PlanRepository
+import com.wakita181009.classic.repository.SubscriptionAddOnRepository
 import com.wakita181009.classic.repository.SubscriptionRepository
 import com.wakita181009.classic.repository.UsageRecordRepository
 import org.springframework.stereotype.Service
@@ -40,6 +45,7 @@ class SubscriptionService(
     private val discountRepository: DiscountRepository,
     private val paymentGateway: PaymentGateway,
     private val clock: Clock,
+    private val subscriptionAddOnRepository: SubscriptionAddOnRepository? = null,
 ) {
     companion object {
         private const val TRIAL_DAYS = 14L
@@ -66,7 +72,31 @@ class SubscriptionService(
             throw DuplicateSubscriptionException(request.customerId)
         }
 
+        // Phase 1: seat count validation for per-seat plans
+        val seatCount: Int?
+        if (plan.perSeatPricing) {
+            if (request.seatCount == null) {
+                throw SeatCountRequiredException()
+            }
+            if (request.seatCount < plan.minimumSeats) {
+                throw SeatCountOutOfRangeException(
+                    "Seat count ${request.seatCount} is below minimum ${plan.minimumSeats}",
+                )
+            }
+            plan.maximumSeats?.let { max ->
+                if (request.seatCount > max) {
+                    throw SeatCountOutOfRangeException(
+                        "Seat count ${request.seatCount} exceeds maximum $max",
+                    )
+                }
+            }
+            seatCount = request.seatCount
+        } else {
+            seatCount = null
+        }
+
         val trialEnd = now.plus(Duration.ofDays(TRIAL_DAYS))
+        val currency = plan.basePrice.currency
         val subscription =
             Subscription(
                 customerId = request.customerId,
@@ -76,6 +106,8 @@ class SubscriptionService(
                 currentPeriodEnd = trialEnd,
                 trialStart = now,
                 trialEnd = trialEnd,
+                seatCount = seatCount,
+                accountCreditBalance = Money.zero(currency),
                 createdAt = now,
                 updatedAt = now,
             )
@@ -118,15 +150,30 @@ class SubscriptionService(
             throw BusinessRuleViolationException("Cannot change currency during plan change")
         }
 
-        val currency = subscription.plan.basePrice.currency
+        val oldPlan = subscription.plan
+        val currency = oldPlan.basePrice.currency
         val periodStart = subscription.currentPeriodStart
         val periodEnd = subscription.currentPeriodEnd
         val totalDays = ChronoUnit.DAYS.between(periodStart, periodEnd)
         val daysRemaining = ChronoUnit.DAYS.between(now, periodEnd)
 
-        // Calculate proration
-        val credit = subscription.plan.basePrice.times(daysRemaining, totalDays)
-        val charge = newPlan.basePrice.times(daysRemaining, totalDays)
+        // Calculate proration for plan
+        val oldPlanCharge =
+            if (oldPlan.perSeatPricing && subscription.seatCount != null) {
+                oldPlan.basePrice.times(subscription.seatCount!!)
+            } else {
+                oldPlan.basePrice
+            }
+        val credit = oldPlanCharge.times(daysRemaining, totalDays)
+
+        val newPlanCharge =
+            if (newPlan.perSeatPricing) {
+                val seats = subscription.seatCount ?: newPlan.minimumSeats
+                newPlan.basePrice.times(seats)
+            } else {
+                newPlan.basePrice
+            }
+        val charge = newPlanCharge.times(daysRemaining, totalDays)
         val netProration = charge - credit
 
         // Create proration invoice (NO discount applied to proration)
@@ -146,7 +193,7 @@ class SubscriptionService(
         val creditLineItem =
             InvoiceLineItem(
                 invoice = invoice,
-                description = "Proration credit for ${subscription.plan.name}",
+                description = "Proration credit for ${oldPlan.name}",
                 amount = credit.negate(),
                 type = LineItemType.PRORATION_CREDIT,
             )
@@ -160,13 +207,67 @@ class SubscriptionService(
         invoice.addLineItem(creditLineItem)
         invoice.addLineItem(chargeLineItem)
 
+        // Phase 1: Handle add-on incompatibilities
+        val addOnCredits = mutableListOf<Money>()
+        subscriptionAddOnRepository?.let { saRepo ->
+            val activeAddOns = saRepo.findBySubscriptionIdAndStatus(subscriptionId, SubscriptionAddOnStatus.ACTIVE)
+            for (sa in activeAddOns) {
+                val addOn = sa.addOn
+                var shouldDetach = false
+
+                // Check tier compatibility
+                if (newPlan.tier !in addOn.compatibleTiers) {
+                    shouldDetach = true
+                }
+
+                // Check PER_SEAT add-on on non-per-seat plan
+                if (addOn.billingType == BillingType.PER_SEAT && !newPlan.perSeatPricing) {
+                    shouldDetach = true
+                }
+
+                if (shouldDetach) {
+                    // Calculate proration credit for detached add-on
+                    val addOnCredit = addOn.price.times(sa.quantity).times(daysRemaining, totalDays)
+                    addOnCredits.add(addOnCredit)
+
+                    val addOnCreditItem =
+                        InvoiceLineItem(
+                            invoice = invoice,
+                            description = "Proration credit for detached add-on: ${addOn.name}",
+                            amount = addOnCredit.negate(),
+                            type = LineItemType.ADDON_PRORATION_CREDIT,
+                        )
+                    invoice.addLineItem(addOnCreditItem)
+
+                    // Detach
+                    sa.transitionTo(SubscriptionAddOnStatus.DETACHED)
+                    sa.detachedAt = now
+                    saRepo.save(sa)
+                }
+            }
+        }
+
+        // Update invoice totals if add-on credits were added
+        if (addOnCredits.isNotEmpty()) {
+            var totalAddonCredit = Money.zero(currency)
+            for (ac in addOnCredits) {
+                totalAddonCredit = totalAddonCredit + ac
+            }
+            val adjustedTotal = netProration - totalAddonCredit
+            invoice.subtotal = adjustedTotal
+            invoice.total = adjustedTotal
+
+            // Add add-on credits to account balance
+            subscription.accountCreditBalance = subscription.accountCreditBalance + totalAddonCredit
+        }
+
         invoice.transitionTo(InvoiceStatus.OPEN)
 
-        val isUpgrade = subscription.plan.tier.isUpgradeTo(newPlan.tier)
+        val isUpgrade = oldPlan.tier.isUpgradeTo(newPlan.tier)
 
-        if (isUpgrade && netProration.amount > BigDecimal.ZERO) {
+        if (isUpgrade && invoice.total.amount > BigDecimal.ZERO) {
             // Charge immediately for upgrades
-            val result = paymentGateway.charge(netProration, "CREDIT_CARD", subscription.customerId)
+            val result = paymentGateway.charge(invoice.total, "CREDIT_CARD", subscription.customerId)
             if (!result.success) {
                 invoiceRepository.save(invoice)
                 throw PaymentFailedException("Payment failed: ${result.errorReason}")
@@ -177,6 +278,15 @@ class SubscriptionService(
         }
 
         invoiceRepository.save(invoice)
+
+        // Phase 1: Handle per-seat transitions
+        if (oldPlan.perSeatPricing && !newPlan.perSeatPricing) {
+            // Per-seat to non-per-seat: set seatCount to null
+            subscription.seatCount = null
+        } else if (!oldPlan.perSeatPricing && newPlan.perSeatPricing) {
+            // Non-per-seat to per-seat: set seatCount to newPlan's minimumSeats
+            subscription.seatCount = newPlan.minimumSeats
+        }
 
         subscription.plan = newPlan
         subscription.updatedAt = now
@@ -304,9 +414,15 @@ class SubscriptionService(
         val periodStart = subscription.currentPeriodStart
         val periodEnd = subscription.currentPeriodEnd
 
-        // Build line items
-        val lineItems = mutableListOf<InvoiceLineItem>()
-        var subtotal = plan.basePrice
+        // Phase 1: Per-seat pricing for plan charge
+        val planChargeAmount =
+            if (plan.perSeatPricing && subscription.seatCount != null) {
+                plan.basePrice.times(subscription.seatCount!!)
+            } else {
+                plan.basePrice
+            }
+
+        var subtotal = planChargeAmount
 
         // Usage charges
         val usageRecords =
@@ -326,6 +442,22 @@ class SubscriptionService(
             subtotal = subtotal + usageCharge
         }
 
+        // Phase 1: Add-on charges
+        val activeAddOns =
+            subscriptionAddOnRepository?.findBySubscriptionIdAndStatus(
+                subscription.id,
+                SubscriptionAddOnStatus.ACTIVE,
+            ) ?: emptyList()
+
+        for (sa in activeAddOns) {
+            val addOnCharge =
+                when (sa.addOn.billingType) {
+                    BillingType.FLAT -> sa.addOn.price
+                    BillingType.PER_SEAT -> sa.addOn.price.times(sa.quantity)
+                }
+            subtotal = subtotal + addOnCharge
+        }
+
         // Apply discount
         var discountAmount = Money.zero(currency)
         val discount = discountRepository.findBySubscriptionId(subscription.id)
@@ -333,8 +465,7 @@ class SubscriptionService(
             discountAmount =
                 when (discount.type) {
                     DiscountType.PERCENTAGE -> {
-                        val discountValue = subtotal.times(discount.value.toLong(), 100L)
-                        discountValue
+                        subtotal.times(discount.value.toLong(), 100L)
                     }
                     DiscountType.FIXED_AMOUNT -> {
                         val fixedAmount = Money(discount.value.setScale(currency.scale, java.math.RoundingMode.HALF_UP), currency)
@@ -348,15 +479,33 @@ class SubscriptionService(
             }
         }
 
-        val total = subtotal - discountAmount
-        val finalTotal = if (total.amount < BigDecimal.ZERO) Money.zero(currency) else total
+        val afterDiscount = subtotal - discountAmount
+        val afterDiscountClamped = if (afterDiscount.amount < BigDecimal.ZERO) Money.zero(currency) else afterDiscount
+
+        // Phase 1: Apply account credit
+        var accountCreditApplied = Money.zero(currency)
+        if (afterDiscountClamped.amount > BigDecimal.ZERO &&
+            subscription.accountCreditBalance.amount > BigDecimal.ZERO
+        ) {
+            val creditToApply =
+                if (subscription.accountCreditBalance.amount >= afterDiscountClamped.amount) {
+                    afterDiscountClamped
+                } else {
+                    subscription.accountCreditBalance
+                }
+            accountCreditApplied = creditToApply
+            subscription.accountCreditBalance = subscription.accountCreditBalance - creditToApply
+        }
+
+        val finalTotal = afterDiscountClamped - accountCreditApplied
+        val finalTotalClamped = if (finalTotal.amount < BigDecimal.ZERO) Money.zero(currency) else finalTotal
 
         val invoice =
             Invoice(
                 subscription = subscription,
                 subtotal = subtotal,
                 discountAmount = discountAmount,
-                total = finalTotal,
+                total = finalTotalClamped,
                 status = InvoiceStatus.DRAFT,
                 dueDate = LocalDate.ofInstant(periodEnd, ZoneOffset.UTC),
                 createdAt = now,
@@ -368,7 +517,7 @@ class SubscriptionService(
             InvoiceLineItem(
                 invoice = invoice,
                 description = "${plan.name} Plan - ${plan.billingInterval}",
-                amount = plan.basePrice,
+                amount = planChargeAmount,
                 type = LineItemType.PLAN_CHARGE,
             )
         invoice.addLineItem(planChargeItem)
@@ -391,16 +540,45 @@ class SubscriptionService(
             invoice.addLineItem(usageItem)
         }
 
+        // Phase 1: Add add-on charge line items
+        for (sa in activeAddOns) {
+            val addOnCharge =
+                when (sa.addOn.billingType) {
+                    BillingType.FLAT -> sa.addOn.price
+                    BillingType.PER_SEAT -> sa.addOn.price.times(sa.quantity)
+                }
+            val addOnItem =
+                InvoiceLineItem(
+                    invoice = invoice,
+                    description = "Add-on: ${sa.addOn.name}",
+                    amount = addOnCharge,
+                    type = LineItemType.ADDON_CHARGE,
+                )
+            invoice.addLineItem(addOnItem)
+        }
+
+        // Phase 1: Add account credit line item
+        if (accountCreditApplied.amount > BigDecimal.ZERO) {
+            val creditItem =
+                InvoiceLineItem(
+                    invoice = invoice,
+                    description = "Account credit applied",
+                    amount = accountCreditApplied.negate(),
+                    type = LineItemType.ACCOUNT_CREDIT,
+                )
+            invoice.addLineItem(creditItem)
+        }
+
         invoice.transitionTo(InvoiceStatus.OPEN)
 
-        if (finalTotal.amount.compareTo(BigDecimal.ZERO) == 0) {
+        if (finalTotalClamped.amount.compareTo(BigDecimal.ZERO) == 0) {
             // Zero total -> auto-Paid
             invoice.transitionTo(InvoiceStatus.PAID)
             invoice.paidAt = now
             invoiceRepository.save(invoice)
         } else {
             // Attempt payment
-            val result = paymentGateway.charge(finalTotal, "CREDIT_CARD", subscription.customerId)
+            val result = paymentGateway.charge(finalTotalClamped, "CREDIT_CARD", subscription.customerId)
             invoice.paymentAttemptCount = 1
             if (result.success) {
                 invoice.transitionTo(InvoiceStatus.PAID)

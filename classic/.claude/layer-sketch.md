@@ -1,299 +1,210 @@
-# Layer Sketch: Subscription Management API (Phase 0)
+# Layer Sketch: Subscription Management API -- Phase 1
 
-## Base Package
-`com.wakita181009.classic`
+Phase 1 EXTENDS Phase 0. All existing files are modified in-place; new files are created for new domain concepts.
 
-## Source Root
-`/Users/tetsuyawakita/IdeaProjects/clean-architecture-kotlin-in-practice/classic`
+Base package: `com.wakita181009.classic`
+Source root: `/Users/tetsuyawakita/IdeaProjects/clean-architecture-kotlin-in-practice/classic`
 
 ---
 
-## 1. Enums
+## 1. Enums (New)
 
-### PlanTier
-- `FREE, STARTER, PROFESSIONAL, ENTERPRISE`
-- Ordered by rank (ordinal). `isUpgradeTo(other)` = this.ordinal < other.ordinal
-- File: `src/main/kotlin/com/wakita181009/classic/model/PlanTier.kt`
+### BillingType
+- File: `src/main/kotlin/com/wakita181009/classic/model/BillingType.kt`
+- Values: `FLAT`, `PER_SEAT`
 
-### BillingInterval
-- `MONTHLY, YEARLY`
-- `fun addTo(instant: Instant): Instant` — adds 1 month or 1 year
-- File: `src/main/kotlin/com/wakita181009/classic/model/BillingInterval.kt`
+### SubscriptionAddOnStatus
+- File: `src/main/kotlin/com/wakita181009/classic/model/SubscriptionAddOnStatus.kt`
+- Values: `ACTIVE`, `DETACHED`
+- `canTransitionTo()`: ACTIVE -> DETACHED only. DETACHED is terminal.
 
-### SubscriptionStatus
-- `TRIAL, ACTIVE, PAUSED, PAST_DUE, CANCELED, EXPIRED`
-- `fun canTransitionTo(target): Boolean` — per spec section 3.1
-- Terminal: CANCELED, EXPIRED
-- File: `src/main/kotlin/com/wakita181009/classic/model/SubscriptionStatus.kt`
+### CreditNoteType
+- File: `src/main/kotlin/com/wakita181009/classic/model/CreditNoteType.kt`
+- Values: `FULL`, `PARTIAL`
 
-### InvoiceStatus
-- `DRAFT, OPEN, PAID, VOID, UNCOLLECTIBLE`
-- `fun canTransitionTo(target): Boolean` — per spec section 3.2
-- Terminal: PAID, VOID, UNCOLLECTIBLE
-- File: `src/main/kotlin/com/wakita181009/classic/model/InvoiceStatus.kt`
+### CreditApplication
+- File: `src/main/kotlin/com/wakita181009/classic/model/CreditApplication.kt`
+- Values: `REFUND_TO_PAYMENT`, `ACCOUNT_CREDIT`
 
-### LineItemType
-- `PLAN_CHARGE, USAGE_CHARGE, PRORATION_CREDIT, PRORATION_CHARGE`
+### CreditNoteStatus
+- File: `src/main/kotlin/com/wakita181009/classic/model/CreditNoteStatus.kt`
+- Values: `ISSUED`, `APPLIED`, `VOIDED`
+- `canTransitionTo()`: ISSUED -> APPLIED, ISSUED -> VOIDED. APPLIED and VOIDED are terminal. No self-transition.
+
+### LineItemType (EXTEND existing)
 - File: `src/main/kotlin/com/wakita181009/classic/model/LineItemType.kt`
-
-### DiscountType
-- `PERCENTAGE, FIXED_AMOUNT`
-- File: `src/main/kotlin/com/wakita181009/classic/model/DiscountType.kt`
+- Add: `ADDON_CHARGE`, `ADDON_PRORATION_CREDIT`, `ADDON_PRORATION_CHARGE`, `SEAT_CHARGE`, `SEAT_PRORATION_CREDIT`, `SEAT_PRORATION_CHARGE`, `ACCOUNT_CREDIT`
 
 ---
 
-## 2. Value Objects
+## 2. JPA Entities
 
-### Money (`@Embeddable data class`)
-- Fields: `amount: BigDecimal`, `currency: Currency`
-- Inner enum `Currency(val scale: Int)`: USD(2), EUR(2), JPY(0)
-- Init: validate JPY has scale=0, amount.scale() <= currency.scale
-- Operators: `plus`, `minus`, `times(Int)`, `times(numerator: Long, denominator: Long)` (for proration with HALF_UP rounding), `negate()`
-- Companion: `zero(currency)`
-- Negative amounts allowed (for credits/proration)
-- File: `src/main/kotlin/com/wakita181009/classic/model/Money.kt`
+### AddOn (NEW)
+- File: `src/main/kotlin/com/wakita181009/classic/model/AddOn.kt`
+- `@Entity @Table(name = "addons") class AddOn`
+- Fields: id(Long @Id @GeneratedValue), name(String), price(Money @Embedded with AttributeOverrides), billingType(BillingType @Enumerated STRING), compatibleTiers(Set<PlanTier> @ElementCollection @Enumerated STRING), active(Boolean), currency(Money.Currency - derived from price.currency)
+- Init block: name.isNotBlank(), price.amount > 0, compatibleTiers.isNotEmpty()
+- Note: currency is derived from price, not a separate column
 
----
+### SubscriptionAddOn (NEW)
+- File: `src/main/kotlin/com/wakita181009/classic/model/SubscriptionAddOn.kt`
+- `@Entity @Table(name = "subscription_addons") class SubscriptionAddOn`
+- Fields: id(Long @Id @GeneratedValue), subscription(@ManyToOne LAZY), addOn(@ManyToOne LAZY), quantity(Int), status(SubscriptionAddOnStatus @Enumerated STRING), attachedAt(Instant), detachedAt(Instant?)
+- `transitionTo(newStatus)` method using canTransitionTo
 
-## 3. JPA Entities
+### CreditNote (NEW)
+- File: `src/main/kotlin/com/wakita181009/classic/model/CreditNote.kt`
+- `@Entity @Table(name = "credit_notes") class CreditNote`
+- Fields: id(Long @Id @GeneratedValue), invoice(@ManyToOne LAZY), subscription(@ManyToOne LAZY), amount(Money @Embedded with AttributeOverrides), reason(String), type(CreditNoteType @Enumerated STRING), application(CreditApplication @Enumerated STRING), status(CreditNoteStatus @Enumerated STRING), refundTransactionId(String?), createdAt(Instant), updatedAt(Instant)
+- `transitionTo(newStatus)` method using canTransitionTo
+- Init block: amount.amount > 0, reason.isNotBlank()
 
-### Plan (`@Entity class`)
-- Fields: id(Long, @Id @GeneratedValue), name(String), billingInterval(BillingInterval), basePrice(Money @Embedded), usageLimit(Int?), features(Set<String> @ElementCollection), tier(PlanTier), active(Boolean)
-- Init block: FREE tier must have zero basePrice; non-FREE must have positive basePrice
+### Plan (EXTEND existing)
 - File: `src/main/kotlin/com/wakita181009/classic/model/Plan.kt`
+- Add fields: `perSeatPricing: Boolean = false`, `minimumSeats: Int = 1`, `maximumSeats: Int? = null`
+- Add init block rules:
+  - FREE cannot have perSeatPricing
+  - if perSeatPricing: minimumSeats >= 1
+  - if perSeatPricing and maximumSeats != null: maximumSeats >= minimumSeats
 
-### Subscription (`@Entity class`)
-- Fields: id, customerId(Long), plan(@ManyToOne LAZY), status(SubscriptionStatus), currentPeriodStart(Instant), currentPeriodEnd(Instant), trialStart(Instant?), trialEnd(Instant?), pausedAt(Instant?), canceledAt(Instant?), cancelAtPeriodEnd(Boolean), gracePeriodEnd(Instant?), pauseCount(Int), createdAt(Instant), updatedAt(Instant)
-- @OneToMany to invoices, usageRecords, discount
-- Methods: `transitionTo(status)` validates via canTransitionTo
+### Subscription (EXTEND existing)
 - File: `src/main/kotlin/com/wakita181009/classic/model/Subscription.kt`
-
-### Invoice (`@Entity class`)
-- Fields: id, subscription(@ManyToOne LAZY), lineItems(@OneToMany), subtotal(Money @Embedded), discountAmount(Money @Embedded), total(Money @Embedded), currency(String), status(InvoiceStatus), dueDate(LocalDate), paidAt(Instant?), paymentAttemptCount(Int), createdAt(Instant), updatedAt(Instant)
-- Methods: `transitionTo(status)` validates via canTransitionTo
-- File: `src/main/kotlin/com/wakita181009/classic/model/Invoice.kt`
-
-### InvoiceLineItem (`@Entity class`)
-- Fields: id, invoice(@ManyToOne LAZY), description(String), amount(Money @Embedded), type(LineItemType)
-- File: `src/main/kotlin/com/wakita181009/classic/model/InvoiceLineItem.kt`
-
-### UsageRecord (`@Entity class`)
-- Fields: id, subscription(@ManyToOne LAZY), metricName(String), quantity(Int), recordedAt(Instant), idempotencyKey(String @Column unique)
-- File: `src/main/kotlin/com/wakita181009/classic/model/UsageRecord.kt`
-
-### Discount (`@Entity class`)
-- Fields: id, subscription(@ManyToOne LAZY), type(DiscountType), value(BigDecimal), durationMonths(Int?), remainingCycles(Int?), appliedAt(Instant)
-- Init: PERCENTAGE value 1..100; FIXED_AMOUNT value > 0; durationMonths 1..24 or null
-- File: `src/main/kotlin/com/wakita181009/classic/model/Discount.kt`
+- Add fields:
+  - `seatCount: Int? = null`
+  - `accountCreditBalance: Money` (@Embedded with AttributeOverrides for account_credit_balance_amount/currency)
+  - `@OneToMany(mappedBy = "subscription") subscriptionAddOns: MutableList<SubscriptionAddOn> = mutableListOf()`
 
 ---
 
-## 4. Repository Interfaces
+## 3. Repositories
 
-### PlanRepository
-- `JpaRepository<Plan, Long>`
-- `findByIdAndActiveTrue(id: Long): Plan?`
-- File: `src/main/kotlin/com/wakita181009/classic/repository/PlanRepository.kt`
+### AddOnRepository (NEW)
+- File: `src/main/kotlin/com/wakita181009/classic/repository/AddOnRepository.kt`
+- `JpaRepository<AddOn, Long>`
+- `findByIdAndActiveTrue(id: Long): AddOn?`
 
-### SubscriptionRepository
-- `JpaRepository<Subscription, Long>`
-- `findByCustomerIdAndStatusIn(customerId: Long, statuses: List<SubscriptionStatus>): List<Subscription>`
-- `findByIdWithPlan(id: Long): Subscription?` (JOIN FETCH plan)
-- `findByCustomerId(customerId: Long): List<Subscription>`
-- `findByStatusAndCurrentPeriodEndBefore(status: SubscriptionStatus, time: Instant): List<Subscription>`
-- `findByStatusAndPausedAtBefore(status: SubscriptionStatus, time: Instant): List<Subscription>`
-- File: `src/main/kotlin/com/wakita181009/classic/repository/SubscriptionRepository.kt`
+### SubscriptionAddOnRepository (NEW)
+- File: `src/main/kotlin/com/wakita181009/classic/repository/SubscriptionAddOnRepository.kt`
+- `JpaRepository<SubscriptionAddOn, Long>`
+- `findBySubscriptionIdAndAddOnIdAndStatus(subscriptionId: Long, addOnId: Long, status: SubscriptionAddOnStatus): SubscriptionAddOn?`
+- `findBySubscriptionIdAndStatus(subscriptionId: Long, status: SubscriptionAddOnStatus): List<SubscriptionAddOn>`
+- `findBySubscriptionId(subscriptionId: Long): List<SubscriptionAddOn>`
+- `countBySubscriptionIdAndStatus(subscriptionId: Long, status: SubscriptionAddOnStatus): Long`
 
-### InvoiceRepository
-- `JpaRepository<Invoice, Long>`
-- `findBySubscriptionId(subscriptionId: Long): List<Invoice>`
-- `findBySubscriptionIdAndStatus(subscriptionId: Long, status: InvoiceStatus): List<Invoice>`
-- File: `src/main/kotlin/com/wakita181009/classic/repository/InvoiceRepository.kt`
-
-### UsageRecordRepository
-- `JpaRepository<UsageRecord, Long>`
-- `findByIdempotencyKey(key: String): UsageRecord?`
-- `findBySubscriptionIdAndRecordedAtBetween(subscriptionId: Long, start: Instant, end: Instant): List<UsageRecord>`
-- `sumQuantityBySubscriptionIdAndRecordedAtBetween(...)` or use query
-- File: `src/main/kotlin/com/wakita181009/classic/repository/UsageRecordRepository.kt`
-
-### DiscountRepository
-- `JpaRepository<Discount, Long>`
-- `findBySubscriptionId(subscriptionId: Long): Discount?`
-- File: `src/main/kotlin/com/wakita181009/classic/repository/DiscountRepository.kt`
+### CreditNoteRepository (NEW)
+- File: `src/main/kotlin/com/wakita181009/classic/repository/CreditNoteRepository.kt`
+- `JpaRepository<CreditNote, Long>`
+- `findByInvoiceId(invoiceId: Long): List<CreditNote>`
+- `findByInvoiceIdAndStatusIn(invoiceId: Long, statuses: List<CreditNoteStatus>): List<CreditNote>`
 
 ---
 
-## 5. Exception Hierarchy
+## 4. Exceptions (EXTEND existing file)
 
-### ServiceException (base)
-- `open class ServiceException(message: String, val status: HttpStatus)`
-- File: `src/main/kotlin/com/wakita181009/classic/exception/ServiceException.kt`
+File: `src/main/kotlin/com/wakita181009/classic/exception/Exceptions.kt`
 
-### Specific Exceptions (all in same file or separate)
-- `PlanNotFoundException(id: Long)` — 404
-- `SubscriptionNotFoundException(id: Long)` — 404
-- `InvoiceNotFoundException(id: Long)` — 404
-- `InvalidStateTransitionException(from: String, to: String)` — 409
-- `BusinessRuleViolationException(message: String)` — 409
-- `PaymentFailedException(message: String)` — 502
-- `DuplicateSubscriptionException(customerId: Long)` — 409
-- `InvalidDiscountCodeException(code: String)` — 400
-- File: `src/main/kotlin/com/wakita181009/classic/exception/Exceptions.kt`
-
-### GlobalExceptionHandler
-- `@RestControllerAdvice`
-- Handles: ServiceException, MethodArgumentNotValidException, ConstraintViolationException, IllegalArgumentException, Exception
-- File: `src/main/kotlin/com/wakita181009/classic/exception/GlobalExceptionHandler.kt`
-
-### ErrorResponse
-- `data class ErrorResponse(val message: String, val status: Int)`
-- File: `src/main/kotlin/com/wakita181009/classic/exception/ErrorResponse.kt`
+Add these new exceptions:
+- `AddOnNotFoundException(id: Long)` -- 404
+- `CurrencyMismatchException(expected: String, actual: String)` -- 409
+- `TierIncompatibilityException(tier: String, compatibleTiers: String)` -- 409
+- `DuplicateAddOnException(addonId: Long)` -- 409
+- `AddOnLimitReachedException(limit: Int)` -- 409
+- `NotPerSeatPlanException()` -- 409
+- `SeatCountOutOfRangeException(message: String)` -- 409
+- `SameSeatCountException(current: Int)` -- 409
+- `SeatCountRequiredException()` -- 400
+- `InvoiceNotPaidException(invoiceId: Long)` -- 409
+- `AlreadyFullyRefundedException(invoiceId: Long)` -- 409
+- `CreditAmountExceedsRemainingException(remaining: String, requested: String)` -- 409
+- `PerSeatAddOnOnNonPerSeatPlanException()` -- 409
+- `SubscriptionAddOnNotFoundException(subscriptionId: Long, addOnId: Long)` -- 404
 
 ---
 
-## 6. Service Classes
+## 5. Services
 
-### PaymentGateway (interface)
-- `fun charge(amount: Money, paymentMethod: String, customerRef: Long): PaymentResult`
-- `fun refund(transactionId: String, amount: Money): RefundResult`
-- `data class PaymentResult(val success: Boolean, val transactionId: String?, val processedAt: Instant?, val errorReason: String?)`
-- `data class RefundResult(val success: Boolean, val errorReason: String?)`
-- File: `src/main/kotlin/com/wakita181009/classic/service/PaymentGateway.kt`
+### AddOnService (NEW)
+- File: `src/main/kotlin/com/wakita181009/classic/service/AddOnService.kt`
+- `@Service` with constructor injection
+- Dependencies: SubscriptionRepository, AddOnRepository, SubscriptionAddOnRepository, InvoiceRepository, PaymentGateway, Clock
+- Methods:
+  - `@Transactional attachAddOn(subscriptionId: Long, addOnId: Long): SubscriptionAddOn` -- UC-9
+  - `@Transactional detachAddOn(subscriptionId: Long, addOnId: Long): SubscriptionAddOn` -- UC-10
+  - `@Transactional(readOnly = true) listAddOns(subscriptionId: Long): List<SubscriptionAddOn>` -- list
 
-### SubscriptionService
-- Dependencies: SubscriptionRepository, PlanRepository, InvoiceRepository, UsageRecordRepository, DiscountRepository, PaymentGateway, Clock
-- Methods: createSubscription, changePlan, pauseSubscription, resumeSubscription, cancelSubscription, processRenewal, getSubscription, listByCustomerId
-- File: `src/main/kotlin/com/wakita181009/classic/service/SubscriptionService.kt`
+### SeatService (NEW)
+- File: `src/main/kotlin/com/wakita181009/classic/service/SeatService.kt`
+- `@Service` with constructor injection
+- Dependencies: SubscriptionRepository, SubscriptionAddOnRepository, InvoiceRepository, PaymentGateway, Clock
+- Methods:
+  - `@Transactional updateSeatCount(subscriptionId: Long, newSeatCount: Int): Subscription` -- UC-11
 
-### UsageService
-- Dependencies: SubscriptionRepository, UsageRecordRepository, Clock
-- Methods: recordUsage
-- File: `src/main/kotlin/com/wakita181009/classic/service/UsageService.kt`
+### CreditNoteService (NEW)
+- File: `src/main/kotlin/com/wakita181009/classic/service/CreditNoteService.kt`
+- `@Service` with constructor injection
+- Dependencies: InvoiceRepository, CreditNoteRepository, SubscriptionRepository, PaymentGateway, Clock
+- Methods:
+  - `@Transactional issueCreditNote(invoiceId: Long, type: CreditNoteType, application: CreditApplication, amount: BigDecimal?, reason: String): CreditNote` -- UC-12
+  - `@Transactional(readOnly = true) listCreditNotes(invoiceId: Long): List<CreditNote>` -- list
 
-### InvoiceService
-- Dependencies: InvoiceRepository, SubscriptionRepository, PaymentGateway, Clock
-- Methods: recoverPayment, listBySubscriptionId
-- File: `src/main/kotlin/com/wakita181009/classic/service/InvoiceService.kt`
+### SubscriptionService (EXTEND existing)
+- Modify `createSubscription()`: handle seatCount, validate per-seat requirements, init accountCreditBalance to Money.zero
+- Modify `changePlan()`: auto-detach incompatible add-ons, handle per-seat<->non-per-seat transitions
+- Modify `processRenewal()`: include add-on charges, per-seat pricing (base_price * seat_count), account credit application after discount
 
----
-
-## 7. DTOs
-
-### Request DTOs
-- `CreateSubscriptionRequest(customerId: Long, planId: Long, paymentMethod: String, discountCode: String?)`
-- `ChangePlanRequest(newPlanId: Long)`
-- `CancelSubscriptionRequest(immediate: Boolean = false)`
-- `RecordUsageRequest(metricName: String, quantity: Int, idempotencyKey: String)`
-- File: `src/main/kotlin/com/wakita181009/classic/dto/Requests.kt`
-
-### Response DTOs
-- `SubscriptionResponse` with `companion object { fun from(entity) }`
-- `InvoiceResponse` with line items
-- `UsageRecordResponse`
-- `PlanResponse` (nested in SubscriptionResponse)
-- `MoneyResponse(amount: BigDecimal, currency: String)`
-- `DiscountResponse`
-- File: `src/main/kotlin/com/wakita181009/classic/dto/Responses.kt`
+### PaymentGateway (EXTEND existing)
+- Modify `RefundResult`: add `refundTransactionId: String? = null` field
 
 ---
 
-## 8. Controllers
+## 6. DTOs
 
-### SubscriptionController
-- `@RestController @RequestMapping("/api/subscriptions")`
-- POST / — createSubscription (201)
-- GET /{id} — getSubscription (200)
-- GET ?customerId={id} — listByCustomer (200)
-- PUT /{id}/plan — changePlan (200)
-- POST /{id}/pause — pause (200)
-- POST /{id}/resume — resume (200)
-- POST /{id}/cancel — cancel (200)
-- POST /{id}/usage — recordUsage (201)
-- File: `src/main/kotlin/com/wakita181009/classic/controller/SubscriptionController.kt`
+### Request DTOs (EXTEND Requests.kt)
+- `AttachAddOnRequest(@field:Positive addonId: Long)`
+- `UpdateSeatCountRequest(@field:Positive seatCount: Int)`
+- `IssueCreditNoteRequest(type: CreditNoteType, application: CreditApplication, amount: BigDecimal? = null, @field:NotBlank reason: String)`
+- Extend `CreateSubscriptionRequest`: add `seatCount: Int? = null`
 
-### InvoiceController
-- `@RestController @RequestMapping("/api/invoices")`
-- POST /{id}/pay — recoverPayment (200)
-- GET ?subscriptionId={id} — listInvoices (200)
-- File: `src/main/kotlin/com/wakita181009/classic/controller/InvoiceController.kt`
+### Response DTOs (EXTEND Responses.kt)
+- `AddOnResponse(id, name, price: MoneyResponse, billingType: String)` with `companion object { fun from(addOn: AddOn) }`
+- `SubscriptionAddOnResponse(id, subscriptionId, addon: AddOnResponse, quantity, status, attachedAt, detachedAt)` with `companion object { fun from(sa: SubscriptionAddOn) }`
+- `CreditNoteResponse(id, invoiceId, subscriptionId, amount: MoneyResponse, reason, type, application, status, refundTransactionId, createdAt, updatedAt)` with `companion object { fun from(cn: CreditNote) }`
+- Extend `SubscriptionResponse`: add `seatCount: Int?`, `accountCreditBalance: MoneyResponse?`, `addons: List<SubscriptionAddOnResponse>`
 
 ---
 
-## 9. Configuration
+## 7. Controllers
 
-### ClockConfig
-- `@Configuration` providing `Clock.systemUTC()` bean
-- File: `src/main/kotlin/com/wakita181009/classic/config/ClockConfig.kt`
+### SubscriptionController (EXTEND existing)
+- Inject AddOnService, SeatService
+- Add: `POST /{id}/addons` -> 201 (AttachAddOnRequest -> SubscriptionAddOnResponse)
+- Add: `DELETE /{id}/addons/{addonId}` -> 200 (SubscriptionAddOnResponse)
+- Add: `PUT /{id}/seats` -> 200 (UpdateSeatCountRequest -> SubscriptionResponse)
+- Add: `GET /{id}/addons` -> 200 (List<SubscriptionAddOnResponse>)
+
+### InvoiceController (EXTEND existing)
+- Inject CreditNoteService
+- Add: `POST /{id}/credit-notes` -> 201 (IssueCreditNoteRequest -> CreditNoteResponse)
+- Add: `GET /{id}/credit-notes` -> 200 (List<CreditNoteResponse>)
 
 ---
 
-## 10. Test Configuration
+## 8. Test Files
 
-### application-test.yaml (or application.yaml in test resources)
-- H2 in-memory database config
-- File: `src/test/resources/application.yaml`
+### New test files to create:
+1. `src/test/kotlin/com/wakita181009/classic/model/AddOnTest.kt` -- 8 tests (AO-V1..V8)
+2. `src/test/kotlin/com/wakita181009/classic/model/CreditNoteEntityTest.kt` -- 6 tests (CN-V1..V6)
+3. `src/test/kotlin/com/wakita181009/classic/model/SubscriptionAddOnStatusTest.kt` -- 4 tests (SA-V1..V3, SA-I1)
+4. `src/test/kotlin/com/wakita181009/classic/model/CreditNoteStatusTest.kt` -- 6 tests (CN-S1..S3, CN-I1..I3)
+5. `src/test/kotlin/com/wakita181009/classic/model/PlanExtendedTest.kt` -- 6 tests (PL-V1..V6)
+6. `src/test/kotlin/com/wakita181009/classic/model/SubscriptionSeatTest.kt` -- 6 tests (SC-V1..V6)
+7. `src/test/kotlin/com/wakita181009/classic/service/AddOnServiceTest.kt` -- 22 tests (AO-H1..H6, AO-P1..P4, AO-E1..E12)
+8. `src/test/kotlin/com/wakita181009/classic/service/SeatServiceTest.kt` -- 20 tests (ST-U1..U4, ST-D1..D3, ST-P1..P3, ST-E1..E10, SA-1..SA-6)
+9. `src/test/kotlin/com/wakita181009/classic/service/CreditNoteServiceTest.kt` -- 18 tests (CN-H1..H7, CN-E1..E11)
 
----
+### Existing test files to extend:
+10. `src/test/kotlin/com/wakita181009/classic/service/SubscriptionServiceTest.kt` -- 26 tests (AR-1..8, CR-1..6, PC-1..6, CS-S1..S6)
+11. `src/test/kotlin/com/wakita181009/classic/controller/SubscriptionControllerTest.kt` -- 15 tests (API-AO1..4, API-DA1..2, API-ST1..6, API-LA1..3)
+12. `src/test/kotlin/com/wakita181009/classic/controller/InvoiceControllerTest.kt` -- 8 tests (API-CN1..5, API-LC1..3)
 
-## Files to Create
-
-### Main sources (src/main/kotlin/com/wakita181009/classic/)
-
-| # | Path | Type |
-|---|------|------|
-| 1 | model/PlanTier.kt | Enum |
-| 2 | model/BillingInterval.kt | Enum |
-| 3 | model/SubscriptionStatus.kt | Enum |
-| 4 | model/InvoiceStatus.kt | Enum |
-| 5 | model/LineItemType.kt | Enum |
-| 6 | model/DiscountType.kt | Enum |
-| 7 | model/Money.kt | Value Object |
-| 8 | model/Plan.kt | Entity |
-| 9 | model/Subscription.kt | Entity |
-| 10 | model/Invoice.kt | Entity |
-| 11 | model/InvoiceLineItem.kt | Entity |
-| 12 | model/UsageRecord.kt | Entity |
-| 13 | model/Discount.kt | Entity |
-| 14 | repository/PlanRepository.kt | Repository |
-| 15 | repository/SubscriptionRepository.kt | Repository |
-| 16 | repository/InvoiceRepository.kt | Repository |
-| 17 | repository/UsageRecordRepository.kt | Repository |
-| 18 | repository/DiscountRepository.kt | Repository |
-| 19 | exception/ServiceException.kt | Exception base |
-| 20 | exception/Exceptions.kt | Specific exceptions |
-| 21 | exception/GlobalExceptionHandler.kt | ControllerAdvice |
-| 22 | exception/ErrorResponse.kt | DTO |
-| 23 | service/PaymentGateway.kt | Interface |
-| 24 | service/SubscriptionService.kt | Service |
-| 25 | service/UsageService.kt | Service |
-| 26 | service/InvoiceService.kt | Service |
-| 27 | dto/Requests.kt | Request DTOs |
-| 28 | dto/Responses.kt | Response DTOs |
-| 29 | controller/SubscriptionController.kt | Controller |
-| 30 | controller/InvoiceController.kt | Controller |
-| 31 | config/ClockConfig.kt | Config |
-
-### Test sources (src/test/kotlin/com/wakita181009/classic/)
-
-| # | Path | Type |
-|---|------|------|
-| 32 | model/MoneyTest.kt | Unit test |
-| 33 | model/PlanTierTest.kt | Unit test |
-| 34 | model/BillingIntervalTest.kt | Unit test |
-| 35 | model/SubscriptionStatusTest.kt | Unit test |
-| 36 | model/InvoiceStatusTest.kt | Unit test |
-| 37 | model/PlanTest.kt | Unit test |
-| 38 | model/DiscountTest.kt | Unit test |
-| 39 | service/SubscriptionServiceTest.kt | Service test |
-| 40 | service/UsageServiceTest.kt | Service test |
-| 41 | service/InvoiceServiceTest.kt | Service test |
-| 42 | controller/SubscriptionControllerTest.kt | Controller test |
-| 43 | controller/InvoiceControllerTest.kt | Controller test |
-| 44 | integration/SubscriptionIntegrationTest.kt | Integration test |
-
-### Test resources
-
-| # | Path | Type |
-|---|------|------|
-| 45 | src/test/resources/application.yaml | Test config |
+### Total new Phase 1 tests: ~156

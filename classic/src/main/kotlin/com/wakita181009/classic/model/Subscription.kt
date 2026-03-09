@@ -1,6 +1,9 @@
 package com.wakita181009.classic.model
 
+import jakarta.persistence.AttributeOverride
+import jakarta.persistence.AttributeOverrides
 import jakarta.persistence.Column
+import jakarta.persistence.Embedded
 import jakarta.persistence.Entity
 import jakarta.persistence.EnumType
 import jakarta.persistence.Enumerated
@@ -11,6 +14,7 @@ import jakarta.persistence.Id
 import jakarta.persistence.Index
 import jakarta.persistence.JoinColumn
 import jakarta.persistence.ManyToOne
+import jakarta.persistence.OneToMany
 import jakarta.persistence.Table
 import java.time.Instant
 
@@ -52,6 +56,16 @@ class Subscription(
     var gracePeriodEnd: Instant? = null,
     @Column(name = "pause_count", nullable = false)
     var pauseCount: Int = 0,
+    @Column(name = "seat_count")
+    var seatCount: Int? = null,
+    @Embedded
+    @AttributeOverrides(
+        AttributeOverride(name = "amount", column = Column(name = "account_credit_balance_amount")),
+        AttributeOverride(name = "currency", column = Column(name = "account_credit_balance_currency")),
+    )
+    var accountCreditBalance: Money = Money.zero(Money.Currency.USD),
+    @OneToMany(mappedBy = "subscription")
+    val subscriptionAddOns: MutableList<SubscriptionAddOn> = mutableListOf(),
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: Instant = Instant.now(),
     @Column(name = "updated_at", nullable = false)

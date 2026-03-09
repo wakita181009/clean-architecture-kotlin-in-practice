@@ -4,28 +4,39 @@ import com.wakita181009.clean.application.command.dto.CancelSubscriptionCommand
 import com.wakita181009.clean.application.command.dto.ChangePlanCommand
 import com.wakita181009.clean.application.command.dto.CreateSubscriptionCommand
 import com.wakita181009.clean.application.command.dto.RecordUsageCommand
+import com.wakita181009.clean.application.command.error.AttachAddOnError
 import com.wakita181009.clean.application.command.error.CancelSubscriptionError
+import com.wakita181009.clean.application.command.error.DetachAddOnError
 import com.wakita181009.clean.application.command.error.PauseSubscriptionError
 import com.wakita181009.clean.application.command.error.PlanChangeError
 import com.wakita181009.clean.application.command.error.RecordUsageError
 import com.wakita181009.clean.application.command.error.ResumeSubscriptionError
 import com.wakita181009.clean.application.command.error.SubscriptionCreateError
+import com.wakita181009.clean.application.command.error.UpdateSeatCountError
+import com.wakita181009.clean.application.command.usecase.AttachAddOnUseCase
 import com.wakita181009.clean.application.command.usecase.CancelSubscriptionUseCase
+import com.wakita181009.clean.application.command.usecase.DetachAddOnUseCase
 import com.wakita181009.clean.application.command.usecase.PauseSubscriptionUseCase
 import com.wakita181009.clean.application.command.usecase.PlanChangeUseCase
 import com.wakita181009.clean.application.command.usecase.RecordUsageUseCase
 import com.wakita181009.clean.application.command.usecase.ResumeSubscriptionUseCase
 import com.wakita181009.clean.application.command.usecase.SubscriptionCreateUseCase
+import com.wakita181009.clean.application.command.usecase.UpdateSeatCountUseCase
+import com.wakita181009.clean.application.query.error.SubscriptionAddOnListQueryError
 import com.wakita181009.clean.application.query.error.SubscriptionFindByIdQueryError
 import com.wakita181009.clean.application.query.error.SubscriptionListByCustomerQueryError
+import com.wakita181009.clean.application.query.usecase.SubscriptionAddOnListQueryUseCase
 import com.wakita181009.clean.application.query.usecase.SubscriptionFindByIdQueryUseCase
 import com.wakita181009.clean.application.query.usecase.SubscriptionListByCustomerQueryUseCase
+import com.wakita181009.clean.presentation.dto.AttachAddOnRequest
 import com.wakita181009.clean.presentation.dto.CancelSubscriptionRequest
 import com.wakita181009.clean.presentation.dto.ChangePlanRequest
 import com.wakita181009.clean.presentation.dto.CreateSubscriptionRequest
 import com.wakita181009.clean.presentation.dto.ErrorResponse
 import com.wakita181009.clean.presentation.dto.RecordUsageRequest
+import com.wakita181009.clean.presentation.dto.SubscriptionAddOnResponse
 import com.wakita181009.clean.presentation.dto.SubscriptionResponse
+import com.wakita181009.clean.presentation.dto.UpdateSeatCountRequest
 import com.wakita181009.clean.presentation.dto.UsageRecordResponse
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -47,8 +58,12 @@ class SubscriptionController(
     private val resumeSubscriptionUseCase: ResumeSubscriptionUseCase,
     private val cancelSubscriptionUseCase: CancelSubscriptionUseCase,
     private val recordUsageUseCase: RecordUsageUseCase,
+    private val attachAddOnUseCase: AttachAddOnUseCase,
+    private val detachAddOnUseCase: DetachAddOnUseCase,
+    private val updateSeatCountUseCase: UpdateSeatCountUseCase,
     private val subscriptionFindByIdQueryUseCase: SubscriptionFindByIdQueryUseCase,
     private val subscriptionListByCustomerQueryUseCase: SubscriptionListByCustomerQueryUseCase,
+    private val subscriptionAddOnListQueryUseCase: SubscriptionAddOnListQueryUseCase,
 ) {
 
     @PostMapping
@@ -59,6 +74,7 @@ class SubscriptionController(
                 planId = request.planId,
                 paymentMethod = request.paymentMethod,
                 discountCode = request.discountCode,
+                seatCount = request.seatCount,
             ),
         ).fold(
             ifLeft = { error ->
@@ -205,6 +221,84 @@ class SubscriptionController(
             },
             ifRight = { dtos ->
                 ResponseEntity.ok(dtos.map { SubscriptionResponse.from(it) })
+            },
+        )
+
+    @PostMapping("/{id}/addons")
+    fun attachAddOn(@PathVariable id: Long, @RequestBody request: AttachAddOnRequest): ResponseEntity<*> =
+        attachAddOnUseCase.execute(id, request.addonId).fold(
+            ifLeft = { error ->
+                when (error) {
+                    is AttachAddOnError.InvalidInput -> ResponseEntity.badRequest().body(ErrorResponse(error.message))
+                    is AttachAddOnError.SubscriptionNotFound -> ResponseEntity.status(HttpStatus.NOT_FOUND).body(ErrorResponse(error.message))
+                    is AttachAddOnError.NotActive -> ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse(error.message))
+                    is AttachAddOnError.AddOnNotFound -> ResponseEntity.status(HttpStatus.NOT_FOUND).body(ErrorResponse(error.message))
+                    is AttachAddOnError.CurrencyMismatch -> ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse(error.message))
+                    is AttachAddOnError.TierIncompatible -> ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse(error.message))
+                    is AttachAddOnError.PerSeatOnNonPerSeatPlan -> ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse(error.message))
+                    is AttachAddOnError.DuplicateAddOn -> ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse(error.message))
+                    is AttachAddOnError.AddOnLimitReached -> ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse(error.message))
+                    is AttachAddOnError.PaymentFailed -> ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(ErrorResponse(error.message))
+                    is AttachAddOnError.Domain -> ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(ErrorResponse(error.message))
+                    is AttachAddOnError.Internal -> ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(ErrorResponse(error.message))
+                }
+            },
+            ifRight = { subscriptionAddOn ->
+                ResponseEntity.status(HttpStatus.CREATED).body(subscriptionAddOn)
+            },
+        )
+
+    @PostMapping("/{id}/addons/{addonId}/detach")
+    fun detachAddOn(@PathVariable id: Long, @PathVariable addonId: Long): ResponseEntity<*> =
+        detachAddOnUseCase.execute(id, addonId).fold(
+            ifLeft = { error ->
+                when (error) {
+                    is DetachAddOnError.InvalidInput -> ResponseEntity.badRequest().body(ErrorResponse(error.message))
+                    is DetachAddOnError.SubscriptionNotFound -> ResponseEntity.status(HttpStatus.NOT_FOUND).body(ErrorResponse(error.message))
+                    is DetachAddOnError.InvalidStatus -> ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse(error.message))
+                    is DetachAddOnError.AddOnNotAttached -> ResponseEntity.status(HttpStatus.NOT_FOUND).body(ErrorResponse(error.message))
+                    is DetachAddOnError.Domain -> ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(ErrorResponse(error.message))
+                    is DetachAddOnError.Internal -> ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(ErrorResponse(error.message))
+                }
+            },
+            ifRight = { subscriptionAddOn ->
+                ResponseEntity.ok(subscriptionAddOn)
+            },
+        )
+
+    @PutMapping("/{id}/seats")
+    fun updateSeatCount(@PathVariable id: Long, @RequestBody request: UpdateSeatCountRequest): ResponseEntity<*> =
+        updateSeatCountUseCase.execute(id, request.seatCount).fold(
+            ifLeft = { error ->
+                when (error) {
+                    is UpdateSeatCountError.InvalidInput -> ResponseEntity.badRequest().body(ErrorResponse(error.message))
+                    is UpdateSeatCountError.SubscriptionNotFound -> ResponseEntity.status(HttpStatus.NOT_FOUND).body(ErrorResponse(error.message))
+                    is UpdateSeatCountError.NotActive -> ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse(error.message))
+                    is UpdateSeatCountError.NotPerSeatPlan -> ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse(error.message))
+                    is UpdateSeatCountError.SameSeatCount -> ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse(error.message))
+                    is UpdateSeatCountError.BelowMinimum -> ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse(error.message))
+                    is UpdateSeatCountError.AboveMaximum -> ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse(error.message))
+                    is UpdateSeatCountError.PaymentFailed -> ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(ErrorResponse(error.message))
+                    is UpdateSeatCountError.Domain -> ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(ErrorResponse(error.message))
+                    is UpdateSeatCountError.Internal -> ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(ErrorResponse(error.message))
+                }
+            },
+            ifRight = { subscription ->
+                ResponseEntity.ok(SubscriptionResponse.from(subscription))
+            },
+        )
+
+    @GetMapping("/{id}/addons")
+    fun listAddOns(@PathVariable id: Long): ResponseEntity<*> =
+        subscriptionAddOnListQueryUseCase.execute(id).fold(
+            ifLeft = { error ->
+                when (error) {
+                    is SubscriptionAddOnListQueryError.InvalidInput -> ResponseEntity.badRequest().body(ErrorResponse(error.message))
+                    is SubscriptionAddOnListQueryError.Internal -> ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(ErrorResponse(error.message))
+                }
+            },
+            ifRight = { dtos ->
+                ResponseEntity.ok(dtos.map { SubscriptionAddOnResponse.from(it) })
             },
         )
 }

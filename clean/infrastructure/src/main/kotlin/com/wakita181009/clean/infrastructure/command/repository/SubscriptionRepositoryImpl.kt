@@ -26,7 +26,6 @@ import org.jooq.generated.tables.references.DISCOUNTS
 import org.jooq.generated.tables.references.PLANS
 import org.jooq.generated.tables.references.SUBSCRIPTIONS
 import org.springframework.stereotype.Repository
-import java.time.OffsetDateTime
 import java.time.ZoneOffset
 
 @Repository
@@ -50,6 +49,9 @@ class SubscriptionRepositoryImpl(
                 .set(SUBSCRIPTIONS.GRACE_PERIOD_END, subscription.gracePeriodEnd?.atOffset(ZoneOffset.UTC))
                 .set(SUBSCRIPTIONS.PAUSE_COUNT_IN_PERIOD, subscription.pauseCountInPeriod)
                 .set(SUBSCRIPTIONS.PAYMENT_METHOD, subscription.paymentMethod?.name)
+                .set(SUBSCRIPTIONS.SEAT_COUNT, subscription.seatCount)
+                .set(SUBSCRIPTIONS.ACCOUNT_CREDIT_BALANCE_AMOUNT, subscription.accountCreditBalance.amount)
+                .set(SUBSCRIPTIONS.ACCOUNT_CREDIT_BALANCE_CURRENCY, subscription.accountCreditBalance.currency.name)
                 .set(SUBSCRIPTIONS.CREATED_AT, subscription.createdAt.atOffset(ZoneOffset.UTC))
                 .set(SUBSCRIPTIONS.UPDATED_AT, subscription.updatedAt.atOffset(ZoneOffset.UTC))
                 .returningResult(SUBSCRIPTIONS.ID)
@@ -70,6 +72,9 @@ class SubscriptionRepositoryImpl(
                 .set(SUBSCRIPTIONS.GRACE_PERIOD_END, subscription.gracePeriodEnd?.atOffset(ZoneOffset.UTC))
                 .set(SUBSCRIPTIONS.PAUSE_COUNT_IN_PERIOD, subscription.pauseCountInPeriod)
                 .set(SUBSCRIPTIONS.PAYMENT_METHOD, subscription.paymentMethod?.name)
+                .set(SUBSCRIPTIONS.SEAT_COUNT, subscription.seatCount)
+                .set(SUBSCRIPTIONS.ACCOUNT_CREDIT_BALANCE_AMOUNT, subscription.accountCreditBalance.amount)
+                .set(SUBSCRIPTIONS.ACCOUNT_CREDIT_BALANCE_CURRENCY, subscription.accountCreditBalance.currency.name)
                 .set(SUBSCRIPTIONS.UPDATED_AT, subscription.updatedAt.atOffset(ZoneOffset.UTC))
                 .where(SUBSCRIPTIONS.ID.eq(subscription.id!!.value))
                 .execute()
@@ -165,6 +170,9 @@ class SubscriptionRepositoryImpl(
             features = features,
             tier = PlanTier.valueOf(planRecord.tier!!),
             active = planRecord.active!!,
+            perSeatPricing = planRecord.perSeatPricing!!,
+            minSeats = planRecord.minSeats!!,
+            maxSeats = planRecord.maxSeats,
         ).mapLeft { it as DomainError }.bind()
 
         val status = toDomainStatus(
@@ -179,6 +187,9 @@ class SubscriptionRepositoryImpl(
                 .mapLeft { InfraError.UnknownValue("PaymentMethod", record.paymentMethod!!) as DomainError }
                 .bind()
         }
+
+        val accountCreditCurrency = Currency.valueOf(record.accountCreditBalanceCurrency!!)
+        val accountCreditBalance = Money.of(record.accountCreditBalanceAmount!!, accountCreditCurrency).bind()
 
         Subscription(
             id = subId,
@@ -197,6 +208,8 @@ class SubscriptionRepositoryImpl(
             paymentMethod = paymentMethod,
             createdAt = record.createdAt!!.toInstant(),
             updatedAt = record.updatedAt!!.toInstant(),
+            seatCount = record.seatCount,
+            accountCreditBalance = accountCreditBalance,
         )
     }
 }

@@ -1,16 +1,22 @@
 package com.wakita181009.classic.controller
 
+import com.wakita181009.classic.dto.AttachAddOnRequest
 import com.wakita181009.classic.dto.CancelSubscriptionRequest
 import com.wakita181009.classic.dto.ChangePlanRequest
 import com.wakita181009.classic.dto.CreateSubscriptionRequest
 import com.wakita181009.classic.dto.RecordUsageRequest
+import com.wakita181009.classic.dto.SubscriptionAddOnResponse
 import com.wakita181009.classic.dto.SubscriptionResponse
+import com.wakita181009.classic.dto.UpdateSeatCountRequest
 import com.wakita181009.classic.dto.UsageRecordResponse
+import com.wakita181009.classic.service.AddOnService
+import com.wakita181009.classic.service.SeatService
 import com.wakita181009.classic.service.SubscriptionService
 import com.wakita181009.classic.service.UsageService
 import jakarta.validation.Valid
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
+import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
@@ -25,6 +31,8 @@ import org.springframework.web.bind.annotation.RestController
 class SubscriptionController(
     private val subscriptionService: SubscriptionService,
     private val usageService: UsageService,
+    private val addOnService: AddOnService,
+    private val seatService: SeatService,
 ) {
     @PostMapping
     fun createSubscription(
@@ -98,5 +106,47 @@ class SubscriptionController(
         require(id > 0) { "Subscription ID must be positive" }
         val usage = usageService.recordUsage(id, request)
         return ResponseEntity.status(HttpStatus.CREATED).body(UsageRecordResponse.from(usage))
+    }
+
+    // Phase 1 endpoints
+
+    @PostMapping("/{id}/addons")
+    fun attachAddOn(
+        @PathVariable id: Long,
+        @Valid @RequestBody request: AttachAddOnRequest,
+    ): ResponseEntity<SubscriptionAddOnResponse> {
+        require(id > 0) { "Subscription ID must be positive" }
+        val subscriptionAddOn = addOnService.attachAddOn(id, request.addonId)
+        return ResponseEntity.status(HttpStatus.CREATED).body(SubscriptionAddOnResponse.from(subscriptionAddOn))
+    }
+
+    @DeleteMapping("/{id}/addons/{addonId}")
+    fun detachAddOn(
+        @PathVariable id: Long,
+        @PathVariable addonId: Long,
+    ): ResponseEntity<SubscriptionAddOnResponse> {
+        require(id > 0) { "Subscription ID must be positive" }
+        require(addonId > 0) { "Add-on ID must be positive" }
+        val subscriptionAddOn = addOnService.detachAddOn(id, addonId)
+        return ResponseEntity.ok(SubscriptionAddOnResponse.from(subscriptionAddOn))
+    }
+
+    @PutMapping("/{id}/seats")
+    fun updateSeats(
+        @PathVariable id: Long,
+        @Valid @RequestBody request: UpdateSeatCountRequest,
+    ): ResponseEntity<SubscriptionResponse> {
+        require(id > 0) { "Subscription ID must be positive" }
+        val subscription = seatService.updateSeatCount(id, request.seatCount)
+        return ResponseEntity.ok(SubscriptionResponse.from(subscription))
+    }
+
+    @GetMapping("/{id}/addons")
+    fun listAddOns(
+        @PathVariable id: Long,
+    ): ResponseEntity<List<SubscriptionAddOnResponse>> {
+        require(id > 0) { "Subscription ID must be positive" }
+        val addOns = addOnService.listAddOns(id)
+        return ResponseEntity.ok(addOns.map { SubscriptionAddOnResponse.from(it) })
     }
 }

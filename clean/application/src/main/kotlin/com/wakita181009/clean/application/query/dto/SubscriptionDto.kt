@@ -23,4 +23,7 @@ data class SubscriptionDto(
     val discountRemainingCycles: Int?,
     val createdAt: Instant,
     val updatedAt: Instant,
+    val seatCount: Int? = null,
+    val accountCreditBalanceAmount: String = "0",
+    val accountCreditBalanceCurrency: String = "USD",
 )

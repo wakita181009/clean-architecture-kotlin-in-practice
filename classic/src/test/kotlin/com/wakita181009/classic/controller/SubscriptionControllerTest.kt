@@ -11,6 +11,8 @@ import com.wakita181009.classic.model.PlanTier
 import com.wakita181009.classic.model.Subscription
 import com.wakita181009.classic.model.SubscriptionStatus
 import com.wakita181009.classic.model.UsageRecord
+import com.wakita181009.classic.service.AddOnService
+import com.wakita181009.classic.service.SeatService
 import com.wakita181009.classic.service.SubscriptionService
 import com.wakita181009.classic.service.UsageService
 import io.mockk.every
@@ -38,6 +40,12 @@ class SubscriptionControllerTest {
 
     @MockkBean
     lateinit var usageService: UsageService
+
+    @MockkBean
+    lateinit var addOnService: AddOnService
+
+    @MockkBean
+    lateinit var seatService: SeatService
 
     private val fixedInstant = Instant.parse("2025-01-15T00:00:00Z")
 

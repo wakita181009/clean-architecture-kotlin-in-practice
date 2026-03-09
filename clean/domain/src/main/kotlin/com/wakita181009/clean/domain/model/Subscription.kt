@@ -19,4 +19,6 @@ data class Subscription(
     val paymentMethod: PaymentMethod?,
     val createdAt: Instant,
     val updatedAt: Instant,
+    val seatCount: Int? = null,
+    val accountCreditBalance: Money = Money.zero(plan.basePrice.currency),
 )

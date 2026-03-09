@@ -4,11 +4,14 @@ import arrow.core.Either
 import arrow.core.raise.either
 import arrow.core.raise.ensure
 import com.wakita181009.clean.application.command.error.ProcessRenewalError
+import com.wakita181009.clean.application.command.port.AddOnQueryPort
 import com.wakita181009.clean.application.command.port.PaymentGatewayPort
+import com.wakita181009.clean.application.command.port.SubscriptionAddOnCommandQueryPort
 import com.wakita181009.clean.application.command.port.SubscriptionCommandQueryPort
 import com.wakita181009.clean.application.command.port.UsageQueryPort
 import com.wakita181009.clean.application.port.ClockPort
 import com.wakita181009.clean.application.port.TransactionPort
+import com.wakita181009.clean.domain.model.AddOnBillingType
 import com.wakita181009.clean.domain.model.Discount
 import com.wakita181009.clean.domain.model.Invoice
 import com.wakita181009.clean.domain.model.InvoiceLineItem
@@ -37,6 +40,8 @@ class ProcessRenewalUseCaseImpl(
     private val discountRepository: DiscountRepository,
     private val clockPort: ClockPort,
     private val transactionPort: TransactionPort,
+    private val subscriptionAddOnCommandQueryPort: SubscriptionAddOnCommandQueryPort? = null,
+    private val addOnQueryPort: AddOnQueryPort? = null,
 ) : ProcessRenewalUseCase {
 
     override fun execute(subscriptionId: Long): Either<ProcessRenewalError, Subscription> = either {
@@ -69,14 +74,49 @@ class ProcessRenewalUseCaseImpl(
         val currency = subscription.plan.basePrice.currency
         val lineItems = mutableListOf<InvoiceLineItem>()
 
-        // Plan charge
+        // Plan charge - for per-seat: base_price * seat_count
+        val planChargeAmount = if (subscription.plan.perSeatPricing && subscription.seatCount != null) {
+            subscription.plan.basePrice.multiply(subscription.seatCount!!.toLong(), 1L)
+        } else {
+            subscription.plan.basePrice
+        }
+
         lineItems.add(
             InvoiceLineItem(
                 description = "${subscription.plan.name} - ${subscription.plan.billingInterval}",
-                amount = subscription.plan.basePrice,
+                amount = planChargeAmount,
                 type = InvoiceLineItemType.PLAN_CHARGE,
             ),
         )
+
+        // Add-on charges
+        if (subscriptionAddOnCommandQueryPort != null && addOnQueryPort != null) {
+            val activeAddOns = subscriptionAddOnCommandQueryPort.findActiveBySubscriptionId(subId)
+                .mapLeft { ProcessRenewalError.Domain(it) }
+                .bind()
+
+            for (subscriptionAddOn in activeAddOns) {
+                val addOn = addOnQueryPort.findActiveById(subscriptionAddOn.addOnId)
+                    .mapLeft { ProcessRenewalError.Domain(it) }
+                    .bind()
+
+                if (addOn != null) {
+                    val addonChargeAmount = if (addOn.billingType == AddOnBillingType.PER_SEAT) {
+                        addOn.price.multiply(subscriptionAddOn.quantity.toLong(), 1L)
+                    } else {
+                        addOn.price
+                    }
+
+                    lineItems.add(
+                        InvoiceLineItem(
+                            description = "Add-on: ${addOn.name}",
+                            amount = addonChargeAmount,
+                            type = InvoiceLineItemType.ADDON_CHARGE,
+                        ),
+                    )
+                }
+            }
+        }
 
         // Usage charges
         val usageRecords = usageQueryPort.findForPeriod(
@@ -87,8 +127,6 @@ class ProcessRenewalUseCaseImpl(
 
         if (usageRecords.isNotEmpty()) {
             val totalQuantity = usageRecords.sumOf { it.quantity }
-            // Simple usage charge: quantity * base rate (for simplicity, usage is charged at plan base rate ratio)
-            // This is a simplified model - real implementation would have per-metric pricing
             val usageAmount = Money.zero(currency)
             if (usageAmount.isPositive()) {
                 lineItems.add(
@@ -113,8 +151,39 @@ class ProcessRenewalUseCaseImpl(
             updatedDiscount = discount.decrementCycle()
         }
 
-        val total = (subtotal - discountAmount).mapLeft { ProcessRenewalError.Domain(it) }.bind()
-        val finalTotal = if (total.isNegative()) Money.zero(currency) else total
+        var total = (subtotal - discountAmount).mapLeft { ProcessRenewalError.Domain(it) }.bind()
+        var finalTotal = if (total.isNegative()) Money.zero(currency) else total
+
+        // Apply account credit balance
+        var accountCreditApplied = Money.zero(currency)
+        var updatedAccountBalance = subscription.accountCreditBalance
+
+        if (subscription.accountCreditBalance.isPositive() && finalTotal.isPositive()) {
+            val creditToApply = if (subscription.accountCreditBalance.amount >= finalTotal.amount) {
+                finalTotal
+            } else {
+                subscription.accountCreditBalance
+            }
+
+            accountCreditApplied = creditToApply
+
+            lineItems.add(
+                InvoiceLineItem(
+                    description = "Account credit applied",
+                    amount = creditToApply.negate(),
+                    type = InvoiceLineItemType.ACCOUNT_CREDIT,
+                ),
+            )
+
+            finalTotal = (finalTotal - creditToApply).mapLeft { ProcessRenewalError.Domain(it) }.bind()
+            updatedAccountBalance = (subscription.accountCreditBalance - creditToApply)
+                .mapLeft { ProcessRenewalError.Domain(it) }.bind()
+
+            // Recalculate subtotal to include account credit line
+            subtotal = lineItems.filter { it.amount.isPositive() }.fold(Money.zero(currency)) { acc, item ->
+                (acc + item.amount).getOrNull() ?: acc
+            }
+        }
 
         val invoice = Invoice(
             id = null,
@@ -159,6 +228,7 @@ class ProcessRenewalUseCaseImpl(
                         currentPeriodEnd = newPeriodEnd,
                         pauseCountInPeriod = 0,
                         updatedAt = now,
+                        accountCreditBalance = updatedAccountBalance,
                     ),
                 ).mapLeft { ProcessRenewalError.Domain(it) }
             }.bind()
@@ -198,6 +268,7 @@ class ProcessRenewalUseCaseImpl(
                         currentPeriodEnd = newPeriodEnd,
                         pauseCountInPeriod = 0,
                         updatedAt = now,
+                        accountCreditBalance = updatedAccountBalance,
                     ),
                 ).mapLeft { ProcessRenewalError.Domain(it) }
             }.bind()
@@ -227,6 +298,7 @@ class ProcessRenewalUseCaseImpl(
                         status = SubscriptionStatus.PastDue(gracePeriodEnd),
                         gracePeriodEnd = gracePeriodEnd,
                         updatedAt = now,
+                        accountCreditBalance = updatedAccountBalance,
                     ),
                 ).mapLeft { ProcessRenewalError.Domain(it) }
             }.bind()

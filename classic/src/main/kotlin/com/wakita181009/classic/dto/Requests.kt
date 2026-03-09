@@ -1,7 +1,10 @@
 package com.wakita181009.classic.dto
 
+import com.wakita181009.classic.model.CreditApplication
+import com.wakita181009.classic.model.CreditNoteType
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Positive
+import java.math.BigDecimal
 
 data class CreateSubscriptionRequest(
     @field:Positive(message = "customerId must be positive")
@@ -11,6 +14,7 @@ data class CreateSubscriptionRequest(
     @field:NotBlank(message = "paymentMethod is required")
     val paymentMethod: String,
     val discountCode: String? = null,
+    val seatCount: Int? = null,
 )
 
 data class ChangePlanRequest(
@@ -29,4 +33,22 @@ data class RecordUsageRequest(
     val quantity: Int,
     @field:NotBlank(message = "idempotencyKey is required")
     val idempotencyKey: String,
+)
+
+data class AttachAddOnRequest(
+    @field:Positive(message = "addonId must be positive")
+    val addonId: Long,
+)
+
+data class UpdateSeatCountRequest(
+    @field:Positive(message = "seatCount must be positive")
+    val seatCount: Int,
+)
+
+data class IssueCreditNoteRequest(
+    val type: CreditNoteType,
+    val application: CreditApplication,
+    val amount: BigDecimal? = null,
+    @field:NotBlank(message = "reason is required")
+    val reason: String,
 )

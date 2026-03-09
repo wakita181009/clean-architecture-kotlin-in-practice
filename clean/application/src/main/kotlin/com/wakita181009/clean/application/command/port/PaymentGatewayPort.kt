@@ -3,6 +3,7 @@ package com.wakita181009.clean.application.command.port
 import arrow.core.Either
 import com.wakita181009.clean.application.command.dto.PaymentError
 import com.wakita181009.clean.application.command.dto.PaymentResult
+import com.wakita181009.clean.application.command.dto.RefundResult
 import com.wakita181009.clean.domain.model.Money
 import com.wakita181009.clean.domain.model.PaymentMethod
 
@@ -12,4 +13,9 @@ interface PaymentGatewayPort {
         paymentMethod: PaymentMethod,
         customerRef: String,
     ): Either<PaymentError, PaymentResult>
+
+    fun refund(
+        originalTransactionId: String,
+        amount: Money,
+    ): Either<PaymentError, RefundResult>
 }

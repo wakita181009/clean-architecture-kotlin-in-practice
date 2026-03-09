@@ -58,6 +58,9 @@ class SubscriptionQueryRepositoryImpl(
             discountRemainingCycles = record.get(DISCOUNTS.REMAINING_CYCLES),
             createdAt = record.get(SUBSCRIPTIONS.CREATED_AT)!!.toInstant(),
             updatedAt = record.get(SUBSCRIPTIONS.UPDATED_AT)!!.toInstant(),
+            seatCount = record.get(SUBSCRIPTIONS.SEAT_COUNT),
+            accountCreditBalanceAmount = record.get(SUBSCRIPTIONS.ACCOUNT_CREDIT_BALANCE_AMOUNT)!!.toPlainString(),
+            accountCreditBalanceCurrency = record.get(SUBSCRIPTIONS.ACCOUNT_CREDIT_BALANCE_CURRENCY)!!,
         )
     }
 
@@ -100,6 +103,9 @@ class SubscriptionQueryRepositoryImpl(
                 discountRemainingCycles = record.get(DISCOUNTS.REMAINING_CYCLES),
                 createdAt = record.get(SUBSCRIPTIONS.CREATED_AT)!!.toInstant(),
                 updatedAt = record.get(SUBSCRIPTIONS.UPDATED_AT)!!.toInstant(),
+                seatCount = record.get(SUBSCRIPTIONS.SEAT_COUNT),
+                accountCreditBalanceAmount = record.get(SUBSCRIPTIONS.ACCOUNT_CREDIT_BALANCE_AMOUNT)!!.toPlainString(),
+                accountCreditBalanceCurrency = record.get(SUBSCRIPTIONS.ACCOUNT_CREDIT_BALANCE_CURRENCY)!!,
             )
         }
     }

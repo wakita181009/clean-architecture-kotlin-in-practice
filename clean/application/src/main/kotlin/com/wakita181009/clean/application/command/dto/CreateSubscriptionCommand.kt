@@ -5,4 +5,5 @@ data class CreateSubscriptionCommand(
     val planId: Long,
     val paymentMethod: String,
     val discountCode: String?,
+    val seatCount: Int? = null,
 )

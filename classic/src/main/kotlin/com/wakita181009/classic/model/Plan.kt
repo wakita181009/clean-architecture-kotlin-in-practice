@@ -45,15 +45,34 @@ class Plan(
     val tier: PlanTier,
     @Column(nullable = false)
     val active: Boolean = true,
+    @Column(name = "per_seat_pricing", nullable = false)
+    val perSeatPricing: Boolean = false,
+    @Column(name = "minimum_seats", nullable = false)
+    val minimumSeats: Int = 1,
+    @Column(name = "maximum_seats")
+    val maximumSeats: Int? = null,
 ) {
     init {
         if (tier == PlanTier.FREE) {
             require(basePrice.amount.compareTo(BigDecimal.ZERO) == 0) {
                 "FREE tier plans must have zero base price"
             }
+            require(!perSeatPricing) {
+                "FREE tier cannot have per-seat pricing"
+            }
         } else {
             require(basePrice.amount > BigDecimal.ZERO) {
                 "Non-FREE tier plans must have positive base price"
+            }
+        }
+        if (perSeatPricing) {
+            require(minimumSeats >= 1) {
+                "Minimum seats must be at least 1 for per-seat plans"
+            }
+            maximumSeats?.let { max ->
+                require(max >= minimumSeats) {
+                    "Maximum seats must be >= minimum seats"
+                }
             }
         }
     }

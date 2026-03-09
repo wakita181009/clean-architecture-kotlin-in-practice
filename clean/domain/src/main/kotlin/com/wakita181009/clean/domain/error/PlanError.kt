@@ -16,4 +16,16 @@ sealed interface PlanError : DomainError {
     data object BlankName : PlanError {
         override val message: String = "Plan name must not be blank"
     }
+
+    data object FreeTierCannotBePerSeat : PlanError {
+        override val message: String = "FREE tier plans cannot have per-seat pricing"
+    }
+
+    data object MinSeatsMustBeAtLeastOne : PlanError {
+        override val message: String = "Minimum seats must be at least 1 for per-seat plans"
+    }
+
+    data object MinSeatsExceedsMaxSeats : PlanError {
+        override val message: String = "Maximum seats must be >= minimum seats"
+    }
 }

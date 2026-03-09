@@ -11,6 +11,7 @@ import com.wakita181009.classic.model.Plan
 import com.wakita181009.classic.model.PlanTier
 import com.wakita181009.classic.model.Subscription
 import com.wakita181009.classic.model.SubscriptionStatus
+import com.wakita181009.classic.service.CreditNoteService
 import com.wakita181009.classic.service.InvoiceService
 import io.mockk.every
 import org.junit.jupiter.api.Test
@@ -33,6 +34,9 @@ class InvoiceControllerTest {
 
     @MockkBean
     lateinit var invoiceService: InvoiceService
+
+    @MockkBean
+    lateinit var creditNoteService: CreditNoteService
 
     private val fixedInstant = Instant.parse("2025-01-15T00:00:00Z")
 

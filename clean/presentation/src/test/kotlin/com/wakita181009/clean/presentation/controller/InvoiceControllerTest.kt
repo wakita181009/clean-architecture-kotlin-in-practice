@@ -27,11 +27,15 @@ import java.time.LocalDate
 class InvoiceControllerTest : DescribeSpec({
 
     val recoverPaymentUseCase = mockk<RecoverPaymentUseCase>()
+    val issueCreditNoteUseCase = mockk<com.wakita181009.clean.application.command.usecase.IssueCreditNoteUseCase>()
     val invoiceListBySubscriptionQueryUseCase = mockk<InvoiceListBySubscriptionQueryUseCase>()
+    val creditNoteListQueryUseCase = mockk<com.wakita181009.clean.application.query.usecase.CreditNoteListQueryUseCase>()
 
     val controller = InvoiceController(
         recoverPaymentUseCase = recoverPaymentUseCase,
+        issueCreditNoteUseCase = issueCreditNoteUseCase,
         invoiceListBySubscriptionQueryUseCase = invoiceListBySubscriptionQueryUseCase,
+        creditNoteListQueryUseCase = creditNoteListQueryUseCase,
     )
 
     val now = Instant.parse("2025-01-15T00:00:00Z")

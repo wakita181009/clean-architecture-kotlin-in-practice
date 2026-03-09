@@ -25,5 +25,6 @@ data class PaymentResult(
 
 data class RefundResult(
     val success: Boolean,
+    val refundTransactionId: String? = null,
     val errorReason: String? = null,
 )

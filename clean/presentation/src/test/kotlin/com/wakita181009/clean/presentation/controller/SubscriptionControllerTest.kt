@@ -55,8 +55,12 @@ class SubscriptionControllerTest : DescribeSpec({
     val resumeSubscriptionUseCase = mockk<ResumeSubscriptionUseCase>()
     val cancelSubscriptionUseCase = mockk<CancelSubscriptionUseCase>()
     val recordUsageUseCase = mockk<RecordUsageUseCase>()
+    val attachAddOnUseCase = mockk<com.wakita181009.clean.application.command.usecase.AttachAddOnUseCase>()
+    val detachAddOnUseCase = mockk<com.wakita181009.clean.application.command.usecase.DetachAddOnUseCase>()
+    val updateSeatCountUseCase = mockk<com.wakita181009.clean.application.command.usecase.UpdateSeatCountUseCase>()
     val subscriptionFindByIdQueryUseCase = mockk<SubscriptionFindByIdQueryUseCase>()
     val subscriptionListByCustomerQueryUseCase = mockk<SubscriptionListByCustomerQueryUseCase>()
+    val subscriptionAddOnListQueryUseCase = mockk<com.wakita181009.clean.application.query.usecase.SubscriptionAddOnListQueryUseCase>()
 
     val controller = SubscriptionController(
         subscriptionCreateUseCase = subscriptionCreateUseCase,
@@ -65,8 +69,12 @@ class SubscriptionControllerTest : DescribeSpec({
         resumeSubscriptionUseCase = resumeSubscriptionUseCase,
         cancelSubscriptionUseCase = cancelSubscriptionUseCase,
         recordUsageUseCase = recordUsageUseCase,
+        attachAddOnUseCase = attachAddOnUseCase,
+        detachAddOnUseCase = detachAddOnUseCase,
+        updateSeatCountUseCase = updateSeatCountUseCase,
         subscriptionFindByIdQueryUseCase = subscriptionFindByIdQueryUseCase,
         subscriptionListByCustomerQueryUseCase = subscriptionListByCustomerQueryUseCase,
+        subscriptionAddOnListQueryUseCase = subscriptionAddOnListQueryUseCase,
     )
 
     val now = Instant.parse("2025-01-15T00:00:00Z")
