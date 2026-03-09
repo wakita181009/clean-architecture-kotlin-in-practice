@@ -1,0 +1,10 @@
+architecture-layer-rules:
+  NoThrowOutsidePresentation:
+    active: true
+    severity: error
+  ForbiddenLayerImport:
+    active: true
+    severity: error
+  NoExplicitAny:
+    active: true
+    severity: error

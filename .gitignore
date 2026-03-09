@@ -1,0 +1,28 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+
+# Kotlin
+*.class
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+*.local
+
+# jOOQ generated sources (uncomment if regenerated on build)
+# clean/infrastructure/src/main/kotlin/com/example/order/infrastructure/persistence/entity/
+
+# Logs
+*.log

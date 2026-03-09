@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && ./gradlew ktlintFormat 2>&1 | tail -60",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
